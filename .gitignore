@@ -1,0 +1,10 @@
+.claude
+CLAUDE.md
+.opencode
+OpenCode.md
+wg-quick
+wg-quick-*
+*.conf
+*.exe
+*.bash
+build/

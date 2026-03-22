@@ -1,0 +1,130 @@
+name: Tests
+
+on:
+  push:
+    branches: [ master, develop ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run unit tests
+      run: go test -v -race -coverprofile=coverage.out ./test/...
+
+  build-tests:
+    name: Build Tests
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        goos: [linux, darwin, freebsd, openbsd]
+        goarch: [amd64]
+        include:
+          - goos: darwin
+            goarch: arm64
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Build for ${{ matrix.goos }}/${{ matrix.goarch }}
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+      run: go build -o wg-quick-go-${{ matrix.goos }}-${{ matrix.goarch }} wg-quick.go
+
+  integration-tests-linux:
+    name: Integration Tests (Linux)
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Install WireGuard tools
+      run: |
+        sudo apt update
+        sudo apt install -y wireguard-tools
+
+    - name: Load WireGuard kernel module
+      run: |
+        sudo modprobe wireguard || echo "Kernel module not available, will use userspace"
+
+    - name: Install wireguard-go (userspace implementation)
+      run: |
+        go install golang.zx2c4.com/wireguard@latest
+        sudo cp $(go env GOPATH)/bin/wireguard /usr/local/bin/wireguard-go
+
+    - name: Build project
+      run: go build -o build/wg-quick-go wg-quick.go
+
+    - name: Run validation tests (no root required)
+      run: go test -v ./test/ -run TestIntegration_ConfigValidation
+
+    - name: Run integration tests
+      run: sudo -E PATH="$PATH" ./scripts/run-tests.sh --integration-only --verbose
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
+        args: --timeout=5m
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Run Gosec Security Scanner
+      uses: securego/gosec@master
+      with:
+        args: '-no-fail -fmt sarif -out results.sarif ./...'
+
+    - name: Upload SARIF file
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: results.sarif
